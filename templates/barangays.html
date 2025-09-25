@@ -171,9 +171,213 @@
             </div>
         </div>
     </div>
+
+    <!-- Flood History -->
+    <div class="card shadow-sm mb-4">
+        <div class="card-header bg-primary text-white">
+            <h5 class="mb-0">
+                <i class="fas fa-history me-2"></i>Flood History for <span id="history-location-name">Selected Area</span>
+            </h5>
+        </div>
+        <div class="card-body">
+            <div class="row mb-3 g-2">
+                <div class="col-md-8">
+                    <input type="text" id="history-search-input" class="form-control" placeholder="Search by alert title or description...">
+                </div>
+                <div class="col-md-4">
+                    <select id="history-severity-filter" class="form-select">
+                        <option value="">All Severities</option>
+                        <option value="5">Catastrophic</option>
+                        <option value="4">Emergency</option>
+                        <option value="3">Warning</option>
+                        <option value="2">Watch</option>
+                        <option value="1">Advisory</option>
+                    </select>
+                </div>
+            </div>
+            <div id="flood-history-container" class="table-responsive">
+                <table class="table table-striped">
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Severity</th>
+                            <th>Description</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="flood-history-body">
+                        <tr>
+                            <td colspan="4" class="text-center py-4 text-muted">
+                                Select a municipality or barangay to view its flood history.
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <nav id="history-pagination" class="d-none">
+                <ul class="pagination justify-content-center">
+                    <!-- Pagination links will be inserted here -->
+                </ul>
+            </nav>
+        </div>
+    </div>
 </div>
 {% endblock %}
 
 {% block extra_js %}
 <script src="/static/js/barangays.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const municipalitySelect = document.getElementById('municipality-select');
+    const barangaySelect = document.getElementById('barangay-select');
+    const historyLocationName = document.getElementById('history-location-name');
+    const historySearchInput = document.getElementById('history-search-input');
+    const historySeverityFilter = document.getElementById('history-severity-filter');
+    let searchDebounceTimer;
+
+    function updateHistoryView() {
+        const barangayId = barangaySelect.value;
+        const municipalityId = municipalitySelect.value;
+        const searchQuery = historySearchInput.value;
+        const severityFilter = historySeverityFilter.value;
+
+        const params = {
+            search: searchQuery,
+            severity: severityFilter
+        };
+
+        if (barangayId) {
+            historyLocationName.textContent = barangaySelect.options[barangaySelect.selectedIndex].text;
+            params.barangayId = barangayId;
+            loadFloodHistory(params);
+        } else if (municipalityId) {
+            historyLocationName.textContent = municipalitySelect.options[municipalitySelect.selectedIndex].text;
+            params.municipalityId = municipalityId;
+            loadFloodHistory(params);
+        } else {
+            historyLocationName.textContent = 'Selected Area';
+            document.getElementById('flood-history-body').innerHTML = '<tr><td colspan="4" class="text-center py-4 text-muted">Select a municipality or barangay to view its flood history.</td></tr>';
+            document.getElementById('history-pagination').classList.add('d-none');
+        }
+    }
+
+    municipalitySelect.addEventListener('change', updateHistoryView);
+    barangaySelect.addEventListener('change', updateHistoryView);
+
+    historySearchInput.addEventListener('input', () => {
+        clearTimeout(searchDebounceTimer);
+        searchDebounceTimer = setTimeout(updateHistoryView, 400); // Debounce search
+    });
+
+    historySeverityFilter.addEventListener('change', updateHistoryView);
+
+    // Initial load if a selection is already present
+    updateHistoryView();
+});
+
+function loadFloodHistory({ municipalityId, barangayId, search = '', severity = '', page = 1 }) {
+    const historyBody = document.getElementById('flood-history-body');
+    const paginationNav = document.getElementById('history-pagination');
+    historyBody.innerHTML = '<tr><td colspan="4" class="text-center py-4"><div class="spinner-border spinner-border-sm" role="status"></div> Loading history...</td></tr>';
+    paginationNav.classList.add('d-none');
+
+    let url = `/api/flood-history/?page=${page}`;
+    if (barangayId) {
+        url += `&barangay_id=${barangayId}`;
+    } else if (municipalityId) {
+        url += `&municipality_id=${municipalityId}`;
+    }
+    if (search) {
+        url += `&search=${encodeURIComponent(search)}`;
+    }
+    if (severity) {
+        url += `&severity=${encodeURIComponent(severity)}`;
+    }
+
+    fetch(url)
+        .then(response => response.json())
+        .then(data => {
+            if (data.history && data.history.length > 0) {
+                historyBody.innerHTML = data.history.map(alert => {
+                    let severityBadge;
+                    switch(alert.severity_level) {
+                        case 5: severityBadge = '<span class="badge rounded-pill bg-danger">Catastrophic</span>'; break;
+                        case 4: severityBadge = '<span class="badge rounded-pill bg-danger">Emergency</span>'; break;
+                        case 3: severityBadge = '<span class="badge rounded-pill bg-warning">Warning</span>'; break;
+                        case 2: severityBadge = '<span class="badge rounded-pill bg-info text-dark">Watch</span>'; break;
+                        case 1: severityBadge = '<span class="badge rounded-pill bg-info text-dark">Advisory</span>'; break;
+                        default: severityBadge = '<span class="badge rounded-pill bg-secondary">Unknown</span>'; break;
+                    }
+                    const statusBadge = alert.is_active 
+                        ? '<span class="badge bg-success">Active</span>' 
+                        : '<span class="badge bg-secondary">Inactive</span>';
+
+                    return `
+                        <tr>
+                            <td>${alert.issued_at}</td>
+                            <td>${severityBadge}</td>
+                            <td>${escapeHtml(alert.title)}</td>
+                            <td>${statusBadge}</td>
+                        </tr>
+                    `;
+                }).join('');
+
+                renderPagination(data.pagination, { municipalityId, barangayId, search, severity });
+            } else {
+                historyBody.innerHTML = '<tr><td colspan="4" class="text-center py-4 text-muted">No flood history found for this location.</td></tr>';
+            }
+        })
+        .catch(error => {
+            console.error('Error fetching flood history:', error);
+            historyBody.innerHTML = '<tr><td colspan="4" class="text-center py-4 text-danger">Failed to load flood history.</td></tr>';
+        });
+}
+
+function renderPagination(pagination, params) {
+    const paginationUl = document.querySelector('#history-pagination .pagination');
+    if (!paginationUl) return;
+
+    paginationUl.innerHTML = '';
+    if (pagination.total_pages <= 1) {
+        document.getElementById('history-pagination').classList.add('d-none');
+        return;
+    }
+
+    document.getElementById('history-pagination').classList.remove('d-none');
+
+    const createPageItem = (page, text, isDisabled = false, isActive = false) => {
+        const li = document.createElement('li');
+        li.className = `page-item ${isDisabled ? 'disabled' : ''} ${isActive ? 'active' : ''}`;
+        const a = document.createElement('a');
+        a.className = 'page-link';
+        a.href = '#';
+        a.textContent = text;
+        if (!isDisabled) {
+            a.onclick = (e) => {
+                e.preventDefault();
+                loadFloodHistory({ ...params, page });
+            };
+        }
+        li.appendChild(a);
+        return li;
+    };
+
+    paginationUl.appendChild(createPageItem(pagination.previous_page_number, 'Previous', !pagination.has_previous));
+
+    for (let i = 1; i <= pagination.total_pages; i++) {
+        paginationUl.appendChild(createPageItem(i, i, false, i === pagination.current_page));
+    }
+
+    paginationUl.appendChild(createPageItem(pagination.next_page_number, 'Next', !pagination.has_next));
+}
+
+function escapeHtml(unsafe) {
+    return unsafe
+         .replace(/&/g, "&amp;")
+         .replace(/</g, "&lt;")
+         .replace(/>/g, "&gt;")
+         .replace(/"/g, "&quot;")
+         .replace(/'/g, "&#039;");
+}
+</script>
 {% endblock %}

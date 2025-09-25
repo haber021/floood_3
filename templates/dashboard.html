@@ -169,25 +169,41 @@
         max-width: 500px;
         box-shadow: 0 5px 15px rgba(0,0,0,0.3);
     }
-    .modal-header {
+    .modal-header { /* Updated */
         display: flex;
         justify-content: space-between;
         align-items: center;
         padding: 15px 20px;
-        border-bottom: 1px solid #eee;
+        border-bottom: 1px solid var(--border);
+        background-color: var(--light);
+        color: var(--dark);
+        border-top-left-radius: 8px;
+        border-top-right-radius: 8px;
     }
-    .modal-header h2 {
+    .modal-header.sev-3 { background-color: var(--warning); color: var(--dark); }
+    .modal-header.sev-4, .modal-header.sev-5 { background-color: var(--danger); color: white; }
+
+    .modal-header h2 { /* Updated */
         margin: 0;
         font-size: 20px;
+        font-weight: 600;
     }
-    .modal-close-btn {
+    .modal-close-btn { /* Updated */
         background: none;
         border: none;
-        font-size: 24px;
+        font-size: 28px;
+        font-weight: 300;
+        line-height: 1;
         cursor: pointer;
+        opacity: 0.7;
+        color: inherit; /* Inherit color from header */
     }
-    .modal-body {
+    .modal-close-btn:hover {
+        opacity: 1;
+    }
+    .modal-body { /* Updated */
         padding: 20px;
+        line-height: 1.7;
     }
 </style>
 {% endblock %}
@@ -298,6 +314,14 @@
         <div class="modern-card" style="grid-column: span 2;">
             <div class="card-header-modern">
                 <div class="card-title-modern">Flood Risk Map</div>
+                <select id="map-param-select" class="form-select form-select-sm" style="width: auto;">
+                    <option value="overall" selected>Overall Risk</option>
+                    <option value="rainfall">Rainfall</option>
+                    <option value="water_level">Water Level</option>
+                    <option value="temperature">Temperature</option>
+                    <option value="humidity">Humidity</option>
+                    <option value="wind_speed">Wind Speed</option>
+                </select>
             </div>
             <div class="map-card-body">
                 <!-- Map first, full width -->

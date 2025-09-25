@@ -154,6 +154,14 @@
     
     <!-- Common JavaScript -->
     <script>
+        let audioContext = null;
+
+        function initAudioContext() {
+            if (!audioContext && (window.AudioContext || window.webkitAudioContext)) {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            }
+        }
+
         // Update date and time display
         function updateDateTime() {
             const now = new Date();
@@ -247,14 +255,30 @@
         
         // Play alert sound
         function playAlertSound() {
+            if (!audioContext) {
+                console.warn("AudioContext not initialized. Click on the page to enable sound.");
+                return;
+            }
+
             // Check if this alert has been played recently
             const lastAlertTime = localStorage.getItem('lastAlertTime');
             const currentTime = new Date().getTime();
             
             // Only play once every 5 minutes
             if (!lastAlertTime || (currentTime - lastAlertTime > 5 * 60 * 1000)) {
-                const audio = new Audio('https://cdn.freesound.org/previews/250/250629_4486188-lq.mp3');
-                audio.play();
+                // Use Web Audio API for a reliable beep
+                const oscillator = audioContext.createOscillator();
+                const gainNode = audioContext.createGain();
+
+                oscillator.connect(gainNode);
+                gainNode.connect(audioContext.destination);
+
+                oscillator.type = 'sine';
+                oscillator.frequency.setValueAtTime(880, audioContext.currentTime); // A4 note
+                gainNode.gain.setValueAtTime(0.5, audioContext.currentTime);
+
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.5); // Play for 0.5 seconds
                 localStorage.setItem('lastAlertTime', currentTime);
             }
         }
@@ -265,6 +289,9 @@
                 updateDateTime();
                 setInterval(updateDateTime, 1000);
             }
+
+            // Initialize AudioContext on the first user interaction
+            document.body.addEventListener('click', initAudioContext, { once: true });
             
             if (document.getElementById('alerts-banner')) {
                 checkActiveAlerts();

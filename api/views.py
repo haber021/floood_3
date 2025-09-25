@@ -1336,6 +1336,13 @@ def get_map_data(request):
     barangays_queryset = Barangay.objects.all()
     
     # Apply filters if provided
+    # New: Also filter sensors and zones by municipality if provided
+    if municipality_id:
+        sensors_queryset = sensors_queryset.filter(municipality_id=municipality_id)
+        # Assuming zones can be linked to a municipality. If not, this filter might need adjustment.
+        # zones_queryset = zones_queryset.filter(municipality_id=municipality_id)
+        barangays_queryset = barangays_queryset.filter(municipality_id=municipality_id)
+
     if municipality_id:
         barangays_queryset = barangays_queryset.filter(municipality_id=municipality_id)
         # For sensors and zones, we need to filter based on geographical coordinates
@@ -1353,6 +1360,12 @@ def get_map_data(request):
         sensors_queryset = sensors_queryset.filter(
             Q(barangay_id=barangay_id) | Q(barangay_id__isnull=True))
     
+    # New: If province or region_1 is specified, filter municipalities first, then barangays
+    if province or (region_1 and region_1.lower() == 'true'):
+        muni_filter = {'province__in': REGION_1_PROVINCES} if (region_1 and region_1.lower() == 'true') else {'province__iexact': province}
+        muni_ids = Municipality.objects.filter(**muni_filter).values_list('id', flat=True)
+        barangays_queryset = barangays_queryset.filter(municipality_id__in=muni_ids)
+    
     # Prepare sensor data with latest readings
     sensor_data = []
     for sensor in sensors_queryset:
@@ -1365,7 +1378,7 @@ def get_map_data(request):
             'name': sensor.name,
             'type': sensor.sensor_type,
             'lat': sensor.latitude,
-            'lng': sensor.longitude,
+            'lng': sensor.longitude, # Corrected from 'long' to 'lng'
             'unit': sensor.unit,
             'value': latest_reading.value if latest_reading else None,
             'timestamp': latest_reading.timestamp if latest_reading else None,
@@ -1392,6 +1405,47 @@ def get_map_data(request):
     # Prepare barangay data with flood risk levels
     barangay_data = []
     for barangay in barangays_queryset:
+        # New: Calculate per-parameter severity for this barangay
+        param_severities = {}
+        thresholds = ThresholdSetting.objects.all()
+        for t in thresholds:
+            # Find latest reading for this parameter, relevant to this barangay
+            # Fallback: barangay-specific -> municipality-wide -> global
+            latest_reading = SensorData.objects.filter(
+                sensor__sensor_type=t.parameter, sensor__barangay=barangay
+            ).order_by('-timestamp').first()
+
+            if not latest_reading and barangay.municipality_id:
+                latest_reading = SensorData.objects.filter(
+                    sensor__sensor_type=t.parameter, sensor__municipality_id=barangay.municipality_id, sensor__barangay__isnull=True
+                ).order_by('-timestamp').first()
+
+            if not latest_reading:
+                latest_reading = SensorData.objects.filter(
+                    sensor__sensor_type=t.parameter, sensor__municipality__isnull=True, sensor__barangay__isnull=True
+                ).order_by('-timestamp').first()
+
+            level = 0
+            if latest_reading:
+                val = latest_reading.value
+                if val >= t.catastrophic_threshold: level = 5
+                elif val >= t.emergency_threshold:    level = 4
+                elif val >= t.warning_threshold:      level = 3
+                elif val >= t.watch_threshold:        level = 2
+                elif val >= t.advisory_threshold:     level = 1
+            
+            param_severities[t.parameter] = level
+
+        # Determine risk level based on active alerts for this barangay
+        highest_sev = FloodAlert.objects.filter(
+            active=True,
+            affected_barangays=barangay
+        ).aggregate(max_sev=Max('severity_level'))['max_sev'] or 0
+
+        risk_level = 'Low'
+        if highest_sev >= 4: risk_level = 'High'
+        elif highest_sev >= 2: risk_level = 'Medium'
+
         # In a real system, this would be calculated based on sensor readings,
         # active alerts, and historical data for this specific barangay
         # For now, we'll use a simplified approach
@@ -1407,12 +1461,10 @@ def get_map_data(request):
         if active_alerts.exists():
             severity = active_alerts.first().severity_level
         
-        # Add some basic severity for demonstration if no alerts
-        # This would normally be based on real-time risk analysis
+        # Calculate proper threshold-based severity if no active alerts
         if severity == 0:
-            # Create a deterministic but varied severity based on barangay id
-            # This ensures consistent display while testing different views
-            severity = (barangay.id % 5) if barangay.id % 7 == 0 else 0
+            # Use the highest severity from any parameter's threshold calculation
+            severity = max(param_severities.values()) if param_severities else 0
         
         barangay_info = {
             'id': barangay.id,
@@ -1424,7 +1476,9 @@ def get_map_data(request):
             'contact_number': barangay.contact_number,
             'lat': barangay.latitude,
             'lng': barangay.longitude,
-            'severity': severity  # 0-5 scale of flood risk
+            'severity': severity,  # Use calculated threshold-based severity
+            'risk_level': risk_level, # Add risk level text
+            'param_severities': param_severities # Add per-parameter severities
         }
         
         barangay_data.append(barangay_info)

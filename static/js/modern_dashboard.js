@@ -20,6 +20,7 @@
     trendsRange: 'latest',
     lastAlertId: null, // Track the last seen alert to play sound only for new ones
     lastCombinedLevel: 0, // Track the last severity level to trigger popups only on change
+    mapDisplayParam: 'overall', // New state for map parameter
   };
   let audioContext = null; // Audio context for playing sounds
 
@@ -36,6 +37,7 @@
     initChart();
     initMap();
     bindApplyThresholdsButton();
+    setupMapParamSelector(); // New: Bind the map parameter selector
     setupTrendsRangeControls();
     // Ensure any previous chart overlay from older versions is removed
     try { clearChartOverlay(); } catch (e) {}
@@ -720,12 +722,46 @@
     oscillator.stop(audioContext.currentTime + 0.5);
   }
 
+  // New: Setup map parameter selector dropdown
+  function setupMapParamSelector() {
+    const selector = document.getElementById('map-param-selector');
+    if (!selector) return;
+
+    // Populate options
+    const options = [
+      { value: 'overall', label: 'Overall Risk' },
+      { value: 'rainfall', label: 'Rainfall' },
+      { value: 'water_level', label: 'Water Level' },
+      { value: 'temperature', label: 'Temperature' },
+      { value: 'humidity', label: 'Humidity' },
+      { value: 'wind_speed', label: 'Wind Speed' }
+    ];
+
+    selector.innerHTML = options.map(opt =>
+      `<option value="${opt.value}" ${state.mapDisplayParam === opt.value ? 'selected' : ''}>${opt.label}</option>`
+    ).join('');
+
+    // Handle changes
+    selector.addEventListener('change', (e) => {
+      state.mapDisplayParam = e.target.value;
+      // Refresh map data to update colors
+      updateMapData();
+    });
+  }
   function openAlertModal(alert) {
     if (!alert) return;
-    document.getElementById('modal-title').textContent = alert.title;
-    document.getElementById('modal-description').textContent = alert.description;
-    document.getElementById('modal-severity').textContent = severityName(alert.severity_level);
-    document.getElementById('alert-modal').style.display = 'flex';
+    const modal = document.getElementById('alert-modal');
+    const header = modal.querySelector('.modal-header');
+    if (!modal || !header) return;
+
+    modal.querySelector('#modal-title').textContent = alert.title;
+    modal.querySelector('#modal-description').textContent = alert.description;
+    modal.querySelector('#modal-severity').textContent = severityName(alert.severity_level);
+
+    header.classList.remove('sev-3', 'sev-4', 'sev-5');
+    if (alert.severity_level >= 3) header.classList.add(`sev-${alert.severity_level}`);
+
+    modal.style.display = 'flex';
   }
 
   function closeAlertModal() {
@@ -801,7 +837,13 @@
         // Title and concise message with compact threshold details (full list remains below)
         if (highest && (highest.severity_level || 0) >= thresholdLevel) {
           // Prioritize active alert severity, but display current selection name
-          title.textContent = `${levels[highest.severity_level] || 'ALERT'}: Automated Alert for ${locText}`;
+          // If the original title already contains the location name, use it. Otherwise, construct a new one.
+          const originalTitle = highest.title || '';
+          if (originalTitle.toLowerCase().includes(locText.toLowerCase())) {
+            title.textContent = originalTitle;
+          } else {
+            title.textContent = `${levels[highest.severity_level] || 'ALERT'}: Automated Alert for ${locText}`;
+          }
           const lines = [];
           // Use a location-aware description instead of the stored alert description,
           // which may reference a different barangay.
@@ -943,9 +985,15 @@
 
         if (barangays.length > 0) {
           tbody.innerHTML = barangays.map(b => {
-            // Determine risk level from the highest severity alert affecting this barangay
-            const riskLevel = 'High'; // Placeholder, as severity isn't passed here.
-            const riskClass = 'status-danger';
+            // Use the severity from the API response for each barangay
+            const severityLevel = b.severity || 0;
+            const riskLevel = getSeverityText(severityLevel);
+            const riskClass = 
+                severityLevel >= 4 ? 'status-danger' :
+                severityLevel >= 3 ? 'status-warning' :
+                severityLevel >= 1 ? 'status-info' : 
+                'status-normal';
+
             return `<tr>
               <td>${escapeHtml(b.name || '—')}</td>
               <td>${Number(b.population || 0).toLocaleString()}</td>
@@ -959,6 +1007,28 @@
       .catch(() => {
         tbody.innerHTML = '<tr><td colspan="3">Unable to load affected areas at this time.</td></tr>';
       });
+  }
+
+  // New helper function to get color based on severity
+  function getThresholdColor(level) {
+    const l = Number(level) || 0;
+    if (l >= 5) return '#7f1d1d'; // Catastrophic (Dark Red)
+    if (l >= 4) return '#ef4444'; // Emergency (Red - var(--danger))
+    if (l >= 3) return '#f97316'; // Warning (Orange)
+    if (l >= 2) return '#f59e0b'; // Watch (Amber/Yellow - var(--warning))
+    if (l >= 1) return '#2563eb'; // Advisory (Blue - var(--primary))
+    return '#10b981'; // Normal (Green - var(--success))
+  }
+
+  // New helper to get severity text
+  function getSeverityText(level) {
+    const l = Number(level) || 0;
+    if (l >= 5) return 'Catastrophic';
+    if (l >= 4) return 'Emergency';
+    if (l >= 3) return 'Warning';
+    if (l >= 2) return 'Watch';
+    if (l >= 1) return 'Advisory';
+    return 'Normal';
   }
 
   // ---------------- Map ----------------
@@ -1109,25 +1179,37 @@
 
   function drawBarangays(items) {
     const coords = [];
-    state.barangayLayerById.clear();
+    if (state.barangayLayerById) state.barangayLayerById.clear();
     items.forEach(b => {
       if (!b.lat || !b.lng) return;
       coords.push([b.lat, b.lng]);
-      // Severity-aware styling if API provides severity/risk_level
-      const sevNum = (typeof b.severity === 'number') ? b.severity
-                    : (String(b.risk_level||'').toLowerCase()==='high' ? 5
-                      : String(b.risk_level||'').toLowerCase()==='medium' ? 3
-                      : String(b.risk_level||'').toLowerCase()==='low' ? 1 : 0);
-      const color = (sevNum>=4) ? '#ef4444' : (sevNum>=3) ? '#f59e0b' : '#10b981';
+      
+      // Use the severity level from the backend API, which is calculated based on
+      // threshold analysis of sensor readings (with active alerts taking priority).
+      let severityLevel = 0; // Default to 0 (Normal)
+      if (state.mapDisplayParam === 'overall') {
+        severityLevel = b.severity || 0;
+      } else if (b.param_severities && b.param_severities[state.mapDisplayParam] !== undefined) {
+        // Use the specific parameter's severity if it exists
+        severityLevel = b.param_severities[state.mapDisplayParam];
+      }
+      const color = getThresholdColor(severityLevel);
+
       const radius = 200 + Math.min(800, Math.sqrt(b.population || 1));
       const circle = L.circle([b.lat, b.lng], {
         radius,
         color,
-        weight: 1,
+        weight: severityLevel >= 3 ? 2 : 1.5, // Thicker border for higher risk
         fillColor: color,
-        fillOpacity: 0.15
+        fillOpacity: 0.4, // Increased opacity for better visibility
+        dashArray: severityLevel >= 3 ? null : '4, 4' // Dashed line for lower risk
       });
-      circle.bindPopup(`<strong>${escapeHtml(b.name || 'Barangay')}</strong><br>Population: ${Number(b.population||0).toLocaleString()}`);
+      const severityText = getSeverityText(severityLevel);
+      circle.bindPopup(
+        `<strong>${escapeHtml(b.name || 'Barangay')}</strong><br>` +
+        `Population: ${Number(b.population||0).toLocaleString()}<br>`+
+        `Risk Level: <span style="color:${color}; font-weight:bold;">${severityText}</span>`
+      );
       circle.addTo(state.mapLayers.barangays);
 
       // Keep reference by id for focusing and interaction

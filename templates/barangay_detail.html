@@ -241,18 +241,18 @@
         const evacuationCenters = [
             {
                 name: "{{ barangay.name }} Elementary School",
-                lat: {{ barangay.latitude|add:0.01 }},
-                lng: {{ barangay.longitude|add:0.01 }},
+                lat: {{ barangay.latitude|floatformat:6 }},
+                lng: {{ barangay.longitude|floatformat:6 }},
                 capacity: 500
             },
             {
                 name: "Community Center",
-                lat: {{ barangay.latitude|add:-0.01 }},
-                lng: {{ barangay.longitude|add:-0.005 }},
+                lat: {{ barangay.latitude|floatformat:6 }},
+                lng: {{ barangay.longitude|floatformat:6 }},
                 capacity: 300
             }
         ];
-        
+
         // Add evacuation center markers
         const evacuationIcon = L.divIcon({
             html: '<i class="fas fa-hospital fa-2x text-success"></i>',
@@ -260,38 +260,42 @@
             iconSize: [30, 30],
             iconAnchor: [15, 15]
         });
-        
-        evacuationCenters.forEach(center => {
+
+        evacuationCenters.forEach(function(center) {
             L.marker([center.lat, center.lng], {icon: evacuationIcon})
                 .addTo(map)
-                .bindPopup(`<strong>${center.name}</strong><br>Capacity: ${center.capacity} people`);
+                .bindPopup('<strong>' + center.name + '</strong><br>Capacity: ' + center.capacity + ' people');
         });
-        
+
+        // Flood history data from the database
+        const floodHistoryJson = JSON.parse('{{ flood_history_json|escapejs }}');
+        const floodHistoryData = {
+            labels: Object.keys(floodHistoryJson),
+            datasets: [{
+                label: 'Flood Events',
+                data: Object.values(floodHistoryJson),
+                backgroundColor: 'rgba(54, 162, 235, 0.5)',
+                borderColor: 'rgb(54, 162, 235)',
+                borderWidth: 1
+            }]
+        };
+
         // Initialize flood history chart
         const floodHistoryChart = new Chart(
             document.getElementById('flood-history-chart'),
             {
                 type: 'bar',
-                data: {
-                    labels: ['2018', '2019', '2020', '2021', '2022'],
-                    datasets: [{
-                        label: 'Flood Events',
-                        data: [2, 3, 1, 4, 2],
-                        backgroundColor: 'rgba(54, 162, 235, 0.5)',
-                        borderColor: 'rgb(54, 162, 235)',
-                        borderWidth: 1
-                    }]
-                },
+                data: floodHistoryData,
                 options: {
                     responsive: true,
                     plugins: {
                         legend: {
-                            position: 'top',
+                            position: 'top'
                         },
                         tooltip: {
                             callbacks: {
                                 label: function(context) {
-                                    return `${context.parsed.y} flood event(s)`;
+                                    return context.parsed.y + ' flood event(s)';
                                 }
                             }
                         }
@@ -317,12 +321,12 @@
                 }
             }
         );
-        
+
         // Print functionality
         document.getElementById('print-details').addEventListener('click', function() {
             window.print();
         });
-        
+
         // Export functionality
         document.getElementById('export-details').addEventListener('click', function() {
             alert('Export functionality would generate a PDF or CSV file with all barangay details.');

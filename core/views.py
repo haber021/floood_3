@@ -5,11 +5,13 @@ from django.contrib.auth import login, logout
 from django.contrib.auth.forms import PasswordResetForm
 from django.contrib.auth.models import User, Group
 from django.contrib import messages
-from django.db.models import Avg, Max, Min, Q
+from django.db.models import Avg, Max, Min, Q, Count
 from django.utils import timezone
 from django.http import JsonResponse, HttpResponseForbidden
 from django.core.paginator import Paginator
 from datetime import timedelta
+from django.db.models.functions import TruncYear
+import json
 try:
     from zoneinfo import ZoneInfo
 except Exception:
@@ -254,11 +256,29 @@ def barangay_detail(request, barangay_id):
     # Get emergency contacts for this barangay
     contacts = EmergencyContact.objects.filter(barangay=barangay)
     
+    # Get flood history for the chart (last 5 years)
+    current_year = timezone.now().year
+    years_range = range(current_year - 4, current_year + 1)
+    
+    # Get counts of alerts per year
+    alert_counts_by_year = (
+        alerts.annotate(year=TruncYear('issued_at'))
+        .values('year')
+        .annotate(count=Count('id'))
+        .order_by('year')
+    )
+    
+    # Prepare data for the chart, ensuring all years in the range are present
+    history_data = {str(year): 0 for year in years_range}
+    for item in alert_counts_by_year:
+        history_data[str(item['year'].year)] = item['count']
+        
     context = {
         'barangay': barangay,
         'alerts': alerts,
         'contacts': contacts,
-        'page': 'barangays'
+        'page': 'barangays',
+        'flood_history_json': json.dumps(history_data)
     }
     
     return render(request, 'barangay_detail.html', context)
@@ -1146,3 +1166,54 @@ def resilience_scores_page(request):
     }
     
     return render(request, 'resilience_scores.html', context)
+
+def get_flood_history(request):
+    """API endpoint to get historical flood alerts for a given location."""
+    municipality_id = request.GET.get('municipality_id')
+    barangay_id = request.GET.get('barangay_id')
+    search_query = request.GET.get('search', '').strip()
+    severity_filter = request.GET.get('severity', '').strip()
+
+    alerts_qs = FloodAlert.objects.all().order_by('-issued_at')
+
+    if barangay_id:
+        alerts_qs = alerts_qs.filter(affected_barangays__id=barangay_id)
+    elif municipality_id:
+        alerts_qs = alerts_qs.filter(affected_barangays__municipality_id=municipality_id)
+
+    # Apply search filter
+    if search_query:
+        alerts_qs = alerts_qs.filter(Q(title__icontains=search_query) | Q(description__icontains=search_query))
+
+    # Apply severity filter
+    if severity_filter and severity_filter.isdigit():
+        alerts_qs = alerts_qs.filter(severity_level=int(severity_filter))
+
+    # Paginate the results
+    paginator = Paginator(alerts_qs.distinct(), 10) # 10 history items per page
+    page_number = request.GET.get('page', 1)
+    page_obj = paginator.get_page(page_number)
+
+    history_data = []
+    for alert in page_obj:
+        history_data.append({
+            'id': alert.id,
+            'title': alert.title,
+            'description': alert.description,
+            'severity_level': alert.severity_level,
+            'severity_display': alert.get_severity_level_display(),
+            'issued_at': _manila_str(alert.issued_at, include_seconds=False),
+            'is_active': alert.active,
+        })
+
+    return JsonResponse({
+        'history': history_data,
+        'pagination': {
+            'has_next': page_obj.has_next(),
+            'has_previous': page_obj.has_previous(),
+            'next_page_number': page_obj.next_page_number() if page_obj.has_next() else None,
+            'previous_page_number': page_obj.previous_page_number() if page_obj.has_previous() else None,
+            'current_page': page_obj.number,
+            'total_pages': paginator.num_pages,
+        }
+    })
