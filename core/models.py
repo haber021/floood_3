@@ -4,6 +4,11 @@ from django.contrib.auth.models import User, Group
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 from django.core.exceptions import ValidationError
+from django.core.management import call_command
+import threading
+import logging
+
+logger = logging.getLogger(__name__)
 
 class Sensor(models.Model):
     """Model for environmental sensors in the system"""
@@ -24,21 +29,44 @@ class Sensor(models.Model):
     barangay = models.ForeignKey('Barangay', on_delete=models.CASCADE, related_name='sensors')
     description = models.TextField(blank=True, null=True)  # Add this field
 
-    
     def __str__(self):
         return f"{self.name} ({self.sensor_type})"
 
 class SensorData(models.Model):
-    """Model for storing sensor readings"""
     sensor = models.ForeignKey(Sensor, on_delete=models.CASCADE, related_name='readings')
     value = models.FloatField()
     timestamp = models.DateTimeField(default=timezone.now)
+    accuracy_rating = models.FloatField(null=True, blank=True)  # Add this field
     
     class Meta:
         ordering = ['-timestamp']
         
     def __str__(self):
         return f"{self.sensor.name}: {self.value} ({self.timestamp})"
+
+@receiver(post_save, sender=SensorData)
+def trigger_threshold_evaluation(sender, instance, created, **kwargs):
+    """
+    Automatically trigger threshold evaluation when new sensor data is saved.
+    Uses threading to avoid blocking the main request.
+    """
+    if created:  # Only run for newly created sensor data
+        def run_threshold_check():
+            try:
+                # Small delay to ensure the transaction is committed
+                import time
+                time.sleep(2)
+                
+                # Run the threshold evaluation command
+                logger.info(f"Triggering threshold evaluation for new sensor data: {instance}")
+                call_command('apply_thresholds_all')
+                logger.info("Threshold evaluation completed successfully")
+            except Exception as e:
+                logger.error(f"Error during threshold evaluation: {e}")
+        
+        # Run in background thread to avoid blocking
+        thread = threading.Thread(target=run_threshold_check, daemon=True)
+        thread.start()
 
 class Municipality(models.Model):
     """Model for municipality data"""
@@ -406,13 +434,3 @@ class ResilienceScore(models.Model):
                 ).exclude(pk=self.pk).update(is_current=False)
         
         super().save(*args, **kwargs)
-
-# In your models.py where SensorData is defined
-class SensorData(models.Model):
-    sensor = models.ForeignKey(Sensor, on_delete=models.CASCADE)
-    value = models.FloatField()
-    timestamp = models.DateTimeField(auto_now_add=True)
-    accuracy_rating = models.FloatField(null=True, blank=True)  # Add this field
-    
-    class Meta:
-        ordering = ['-timestamp']

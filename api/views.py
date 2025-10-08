@@ -24,7 +24,8 @@ logger = logging.getLogger(__name__)
 from core.models import (
     Sensor, SensorData, Municipality, Barangay, FloodRiskZone, 
     FloodAlert, ThresholdSetting, NotificationLog, EmergencyContact,
-    ResilienceScore
+    ResilienceScore,
+    UserProfile
 )
 from .serializers import (
     SensorSerializer, SensorDataSerializer, MunicipalitySerializer, BarangaySerializer,
@@ -32,6 +33,7 @@ from .serializers import (
     NotificationLogSerializer, EmergencyContactSerializer, ResilienceScoreSerializer
 )
 
+from core.notifications import dispatch_notifications_for_alert
 class SensorViewSet(viewsets.ReadOnlyModelViewSet):
     """API endpoint for sensors"""
     queryset = Sensor.objects.all()
@@ -162,6 +164,8 @@ def check_thresholds(sensor, value):
                 existing_alert.description = f"{sensor.sensor_type.title()} has reached {value} {threshold.unit}, which exceeds the {get_severity_name(severity_level)} threshold."
                 existing_alert.updated_at = timezone.now()
                 existing_alert.save()
+                # Dispatch notifications for the updated alert
+                dispatch_notifications_for_alert(existing_alert)
         else:
             # Create a new alert
             alert = FloodAlert.objects.create(
@@ -171,10 +175,13 @@ def check_thresholds(sensor, value):
                 active=True
             )
             
-            # For simplicity, we'll add all barangays to the alert
-            # In a real system, you'd determine which barangays are affected
-            barangays = Barangay.objects.all()
-            alert.affected_barangays.set(barangays)
+            # FIX: Associate the alert ONLY with the sensor's specific barangay.
+            # This prevents creating overly broad alerts that cause mismatches later.
+            if sensor.barangay:
+                alert.affected_barangays.set([sensor.barangay])
+            
+            # Dispatch notifications for the new alert
+            dispatch_notifications_for_alert(alert)
 
 def get_severity_name(severity_level):
     """Get the human-readable name for a severity level"""
@@ -1733,11 +1740,13 @@ def apply_thresholds(request):
                 continue
 
             if existing:
-                if highest_severity > existing.severity_level or existing.description != description:
-                    existing.severity_level = max(existing.severity_level, highest_severity)
+                if existing.severity_level != highest_severity or existing.description != description:
+                    existing.severity_level = highest_severity
+                    existing.title = f"{title_prefix}: {sev_name[highest_severity]}"
                     existing.description = description
                     existing.updated_at = timezone.now()
                     existing.save()
+                    dispatch_notifications_for_alert(existing) # Dispatch notifications
                     total_updated += 1
                     results.append({
                         'barangay_id': b.id,
@@ -1763,6 +1772,7 @@ def apply_thresholds(request):
                     active=True,
                 )
                 alert.affected_barangays.set([b])
+                dispatch_notifications_for_alert(alert) # Dispatch notifications
                 total_created += 1
                 results.append({
                     'barangay_id': b.id,

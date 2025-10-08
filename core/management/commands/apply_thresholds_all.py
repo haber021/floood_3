@@ -9,6 +9,7 @@ from core.models import (
     ThresholdSetting,
     FloodAlert,
 )
+from core.notifications import dispatch_notifications_for_alert
 
 
 def evaluate_severity(value: float, ts: ThresholdSetting) -> int:
@@ -160,11 +161,13 @@ class Command(BaseCommand):
 
             if existing:
                 # Update if severity increased or refresh description
-                if highest_severity > existing.severity_level or existing.description != description:
-                    existing.severity_level = max(existing.severity_level, highest_severity)
+                if existing.severity_level != highest_severity or existing.description != description:
+                    existing.severity_level = highest_severity
+                    existing.title = f"{title_prefix}: {sev_name[highest_severity]}"
                     existing.description = description
                     existing.updated_at = timezone.now()
                     existing.save()
+                    dispatch_notifications_for_alert(existing)
                     total_alerts_updated += 1
                     self.stdout.write(
                         self.style.SUCCESS(
@@ -182,6 +185,7 @@ class Command(BaseCommand):
                     active=True,
                 )
                 alert.affected_barangays.set([b])
+                dispatch_notifications_for_alert(alert)
                 total_alerts_created += 1
                 self.stdout.write(
                     self.style.SUCCESS(

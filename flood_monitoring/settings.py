@@ -84,17 +84,19 @@ if DATABASE_URL:
         'default': dj_database_url.config()
     }
 else:
-    # Fallback to PostgreSQL with environment variables
+    # Use SQLite for local development
     DATABASES = {
         'default': {
-            'ENGINE': 'django.db.backends.postgresql',
-            'NAME': os.getenv('PGDATABASE', 'flood_monitoring'),
-            'USER': os.getenv('PGUSER', 'postgres'),
-            'PASSWORD': os.getenv('PGPASSWORD', 'postgres'),
-            'HOST': os.getenv('PGHOST', 'localhost'),
-            'PORT': os.getenv('PGPORT', '5432'),
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': os.path.join(BASE_DIR, 'db.sqlite3'),
         }
     }
+
+# Keep Debug on for local development
+DEBUG = True
+
+# Local hosts
+ALLOWED_HOSTS = ['localhost', '127.0.0.1', '*']
 
 # Password validation
 # https://docs.djangoproject.com/en/4.2/ref/settings/#auth-password-validators
@@ -158,8 +160,7 @@ REST_FRAMEWORK = {
 # Load local settings if running locally or on development server
 try:
     if is_localhost or DEBUG:
-        from .local_settings import *
-        print("Loaded local development settings")
+        print("Using local development settings with SQLite database")
 except ImportError:
-    print("No local_settings.py found, using production settings")
+    print("Using production settings")
 

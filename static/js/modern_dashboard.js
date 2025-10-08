@@ -619,18 +619,21 @@
       if (!sev || !sev.items) return;
       const levelByParam = {};
       sev.items.forEach(it => { levelByParam[it.parameter] = it.level || 0; });
-      // Apply text color to values
-      applySeverityStyle('temperature-value', levelByParam.temperature || 0);
-      applySeverityStyle('humidity-value', levelByParam.humidity || 0);
-      applySeverityStyle('rainfall-value', levelByParam.rainfall || 0);
-      applySeverityStyle('water-level-value', levelByParam.water_level || 0);
-      applySeverityStyle('wind-speed-value', levelByParam.wind_speed || 0);
-      // Decorate container cards with severity classes
+      
+      // Decorate container cards with severity classes.
+      // This will automatically handle the text color of the values via CSS.
       setSeverityClass('temperature-value', levelByParam.temperature || 0);
       setSeverityClass('humidity-value', levelByParam.humidity || 0);
       setSeverityClass('rainfall-value', levelByParam.rainfall || 0);
       setSeverityClass('water-level-value', levelByParam.water_level || 0);
       setSeverityClass('wind-speed-value', levelByParam.wind_speed || 0);
+
+      // Apply color to the value text itself.
+      applySeverityStyle('temperature-value', levelByParam.temperature || 0);
+      applySeverityStyle('humidity-value', levelByParam.humidity || 0);
+      applySeverityStyle('rainfall-value', levelByParam.rainfall || 0);
+      applySeverityStyle('water-level-value', levelByParam.water_level || 0);
+      applySeverityStyle('wind-speed-value', levelByParam.wind_speed || 0);
 
       // Update status chips and extra text using returned items
       sev.items.forEach(it => {
@@ -647,9 +650,11 @@
   function applySeverityStyle(id, level) {
     const el = document.getElementById(id);
     if (!el) return;
-    let color = '#16a34a'; // normal
-    if (level >= 4) color = '#dc2626'; // danger
-    else if (level >= 2) color = '#d97706'; // warning
+    const lvl = Math.max(0, Math.min(5, Number(level) || 0));
+    let color = '#16a34a'; // sev-0
+    if (lvl >= 4) color = '#dc2626'; // sev-4, sev-5
+    else if (lvl === 3) color = '#d97706'; // sev-3
+    else if (lvl >= 1) color = '#0ea5e9'; // sev-1, sev-2
     el.style.color = color;
   }
 
@@ -1012,23 +1017,17 @@
   // New helper function to get color based on severity
   function getThresholdColor(level) {
     const l = Number(level) || 0;
-    if (l >= 5) return '#7f1d1d'; // Catastrophic (Dark Red)
-    if (l >= 4) return '#ef4444'; // Emergency (Red - var(--danger))
-    if (l >= 3) return '#f97316'; // Warning (Orange)
-    if (l >= 2) return '#f59e0b'; // Watch (Amber/Yellow - var(--warning))
-    if (l >= 1) return '#2563eb'; // Advisory (Blue - var(--primary))
-    return '#10b981'; // Normal (Green - var(--success))
+    if (l >= 4) return '#ef4444'; // High Risk (Danger)
+    if (l >= 2) return '#f59e0b'; // Medium Risk (Warning)
+    return '#10b981'; // Low Risk (Success)
   }
 
   // New helper to get severity text
   function getSeverityText(level) {
     const l = Number(level) || 0;
-    if (l >= 5) return 'Catastrophic';
-    if (l >= 4) return 'Emergency';
-    if (l >= 3) return 'Warning';
-    if (l >= 2) return 'Watch';
-    if (l >= 1) return 'Advisory';
-    return 'Normal';
+    if (l >= 4) return 'High Risk';
+    if (l >= 2) return 'Medium Risk';
+    return 'Low Risk';
   }
 
   // ---------------- Map ----------------
